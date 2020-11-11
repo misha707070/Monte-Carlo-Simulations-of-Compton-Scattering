@@ -1,0 +1,206 @@
+"""" 
+Code that simulates data being generated due to Compton Scattering as
+well as background noise. Assuming a count detection rate of 1 count per ms, 
+it outputs the minimum anticipated time required to detect a peak in an 
+expected energy range, for a given level of background noise.
+This can aid in experiment planning.
+"""
+
+#Import relevent packages
+import numpy as np 
+import matplotlib.pyplot as plt 
+import math
+import random
+from scipy.signal import find_peaks, peak_prominences
+from pandas import DataFrame
+from scipy.optimize import curve_fit, minimize_scalar
+import scipy as sp
+import statistics 
+
+#%%
+
+#Create empty lists for energy and count, number of data points, fwhm and peak errors
+energy = []
+count = []
+datapoints = []
+fwhm = []
+errors=[]
+
+#These input values can be adjusted to provide simulations for different conditions
+amplitude = 3200
+meanvalue = 550
+standarddev = 46
+back_percent = 0.1
+
+#Define the probability function for the background - this is a gamma function
+def prob_b(x):
+    amp = 10000
+    beta = 190
+    alpha = 0.7
+    original1=amp*((beta**alpha)/sp.special.gamma(alpha))*((1/x)**(alpha+1))*np.exp(-beta/x)
+    noise1=np.random.normal(0.1, 1)  #Add Gaussian noise to the signal
+    signal1 = original1 + noise1  
+    return signal1
+
+#Define the probability function for the photopeak 
+#This is a Gaussian, and the expected mean, standard deviation and amplitude  
+#can be changed accoring to the scattering angle 
+def prob_s(x):
+    amp = amplitude
+    mean = meanvalue
+    stddev = standarddev
+    original2= ((amp / (np.sqrt(2*math.pi) * stddev))) * np.exp(-(x-mean)**2 / (2*stddev**2))
+    noise2 = np.random.normal(0.1, 1) #add gaussian noise to the signal 
+    signal2 = original2 + noise2
+    return signal2
+
+
+for j in range(1):
+    a=0               #Define variables 'a' and 'number' and initialise them to zero
+    number = 0
+    energy = []       #This is done so that the list clears with each iteration
+    count = []
+    while True:
+        r=0    #Initialise random number variables to zero
+        rb=0
+        rs=0
+        r = random.random() #Generate a random number between zero and one 
+        if r < back_percent: #Depending on the level of background, this inequality can be changed
+            rb = random.uniform(0, 1750) #Random number in this range 
+            energy.append(rb) #Add the generated number to the energy list
+            count.append(prob_b(rb)) #Input the number inot the background function and add to count list
+        else:
+            rs = random.uniform(0, 1750)
+            energy.append(rs)
+            count.append(prob_s(rs))
+            
+        #Add values to a data frame and sort them 
+        df=0     #initialise these variables 
+        data=0
+        data ={'Energy':energy, 'Count':count}
+        df = DataFrame(data, columns=['Energy', 'Count'])
+        df.sort_values(by='Energy', inplace=True, ascending=True)
+        df.reset_index(inplace=True)
+        
+        x = df.Energy.tolist()
+        y = df.Count.tolist()
+        
+        peaks= find_peaks(y, width=5)[0]
+        #Set a minimum width and prominence to prevent false peaks 
+        prominence = peak_prominences(y, peaks)[0]
+        
+        #This loop breaks when a photopeak is found in the appropriate range
+        for i in peaks:
+            getenergy = df.loc[i, 'Energy']
+            getcount = df.loc[i, 'Count']
+            if getenergy < 750 and getenergy>500:
+                a=1
+                break
+        number+=1 #used to count the number of iterations before breaking
+        if a==1:
+            break
+
+    datapoints.append(number)
+    
+    #fit a gaus
+    def gaussian(x, amp, mean, stddev):
+        return ((amp / (np.sqrt(2*math.pi) * stddev))) * np.exp(-(x-mean)**2 / (2*stddev**2))
+    
+    plt.plot(x, y, 'black', marker = '.', ls = 'none')
+    initialguess = [amplitude, meanvalue, standarddev]
+    popt, pcov = curve_fit(gaussian, x, y, initialguess, bounds = ((0, 450, 0), (np.inf, 750, 50)))
+    
+    xfit = np.arange(0.0, 1750.0, 1) 
+    plt.plot (xfit, gaussian(xfit, *popt), 'r', label = 'amp=%5.3f, mean=%5.3f, stddev=%5.3f' % tuple(popt))
+    plt.legend(loc='upper right', fontsize=8, handlelength = 0.5)
+    plt.xlabel('Energy/ke?V')
+    plt.ylabel('Count')
+    plt.title('Cs-137 30 degree Scattering Simulated Data- 10% Background')
+    plt.show()
+    
+    fm = lambda x: -gaussian(x, *popt)
+    r = minimize_scalar(fm, bounds=(1, 5))
+
+    values = tuple(popt)
+    stddev = values[2]
+
+    FWHM = 2*np.sqrt(2*np.log(2))*stddev #find the full width at half maximum
+    fwhm.append(FWHM)
+
+#append average values to lists 
+datapointsmean = statistics.mean(datapoints)
+datapointserror = statistics.stdev(datapoints)/math.sqrt(len(datapoints))
+fwhmmean = statistics.mean(fwhm)
+fwhmerror = statistics.stdev(fwhm)/math.sqrt(len(fwhm))
+print("Mean number of data points =", datapointsmean)
+print("Error on the mean =", datapointserror)
+print("Mean full width at half maximum =", fwhmmean)
+print("Error on the fwhm =", fwhmerror)
+
+#%%
+
+"""Plot the data obtained from the simulation and extract appropriate values about the linear regression"""
+
+back = np.array([0, 10, 20, 30, 40, 50])
+t_20 = np.array([123.52, 157.58, 201.52, 268.86, 309.16, 300.54])
+er_20 = np.array([68.71549142, 73.09735215, 79.75977934, 87.79746236, 103.6843588, 112.8267104])
+t_30 = np.array([75.76, 96.6, 128.24, 169.26, 199.58, 191.98])
+er_30 = np.array([108.8308259, 113.1488783, 115.2230836, 115.531704, 117.4548669, 116.0360027])
+t_45 = np.array([188.48, 245.66, 292.86, 322.38, 309.9, 410.98])
+er_45 = np.array([91.00166947, 93.50630412, 96.63459309, 98.53676771, 105.9206777, 109.3508107])
+
+t_20_err = [8.359055214653905, 12.370480003225586, 21.751865976724563, 25.09810123723079, 36.831652314889396, 52.22704749261553]
+er_20_err = [0.23435022890905455, 0.7976458288599503, 1.6968769378796906, 1.9883757586861983, 1.13245747896695556, 1.36564801027237635]
+t_30_err = [5.150391306711064, 6.946494637952442, 15.566516656475414, 24.36524389789853, 43.27156062801148, 44.81842332554499]
+er_30_err = [0.35938095115333235, 1.0385504680080295, 1.0912833827944195, 1.8657759832198852, 1.172855415919575, 1.5606426087287686]
+t_45_err = [21.437674447436823, 23.104578749323117, 27.64726520778118, 36.99162618976442, 57.73268193376526, 53.436108024596315]
+er_45_err = [0.27223181851298156, 1.0569049042632865, 1.4002482254361985, 2.0231078321577773, 2.22854569634719, 3.177821578328292]
+
+#%%
+a,b = np.polyfit(back, t_20, 1)
+plt.errorbar(back, t_20,yerr = t_20_err, c='black',marker='x', ls='none', label = '20 degrees')
+plt.plot(back, a*back + b, c='black')
+slope, intercept, r_value, p_value, std_err= sp.stats.linregress(back, t_20)
+print(" t_20 - slope: %f    intercept: %f    r_value: %f" % (slope, intercept, r_value))
+
+c,d = np.polyfit(back, t_30, 1)
+plt.errorbar(back, t_30,yerr = t_30_err, c='maroon', marker='x', ls='none', label = '30 degrees')
+plt.plot(back, c*back +d, c='maroon')
+slope, intercept, r_value, p_value, std_err= sp.stats.linregress(back, t_30)
+print(" t_30 - slope: %f    intercept: %f    r_value: %f" % (slope, intercept, r_value))
+
+e,f = np.polyfit(back, t_45, 1)
+plt.errorbar(back, t_45,yerr = t_45_err, c='navy', marker ='x', ls='none', label = '45 degrees')
+plt.plot(back, e*back + f, c='navy')
+slope, intercept, r_value, p_value, std_err= sp.stats.linregress(back, t_45)
+print(" t_45 - slope: %f    intercept: %f    r_value: %f" % (slope, intercept, r_value))
+
+plt.xlabel('Level of background (%)')
+plt.ylabel('Average Number of Data Points')
+plt.title('Correlation between background level and time taken for peak detection')
+plt.legend()
+
+#%%
+
+g,h = np.polyfit(back, er_20, 1)
+plt.errorbar(back, er_20,yerr = er_20_err, c='salmon', marker='x', ls='none', label = '20 degrees')
+plt.plot(back, g*back + h, c='salmon')
+slope, intercept, r_value, p_value, std_err= sp.stats.linregress(back, er_20)
+print(" er_20 - slope: %f    intercept: %f    r_value: %f" % (slope, intercept, r_value))
+
+i,j = np.polyfit(back, er_30, 1)
+plt.errorbar(back, er_30,yerr = er_30_err, c='orange', marker='x', ls='none', label = '30 degrees')
+plt.plot(back, i*back +j, c='orange')
+slope, intercept, r_value, p_value, std_err= sp.stats.linregress(back, er_30)
+print(" er_30 - slope: %f    intercept: %f    r_value: %f" % (slope, intercept, r_value))
+
+k,l = np.polyfit(back, er_45, 1)
+plt.errorbar(back, er_45,yerr = er_45_err, c='brown', marker='x', ls='none', label = '45 degrees')
+plt.plot(back, k*back +l, c='brown')
+slope, intercept, r_value, p_value, std_err= sp.stats.linregress(back, er_45)
+print(" er_45 - slope: %f    intercept: %f    r_value: %f" % (slope, intercept, r_value))
+
+plt.xlabel('Level of background (%)')
+plt.ylabel('Error on the simulated peaks')
+plt.title('Correlation between background level and the error on each detected peak')
+plt.legend()
